@@ -52,8 +52,8 @@ type channelPool struct {
 }
 
 type idleConn struct {
-	conn interface{}
-	t    time.Time
+	conn    interface{}
+	t       time.Time
 	useTime time.Time
 }
 
@@ -91,12 +91,10 @@ func NewChannelPool(poolConfig *Config) (Pool, error) {
 		c.conns <- &idleConn{conn: conn, t: time.Now(), useTime: time.Now()}
 	}
 
-
-	go c.cleanUp(poolConfig)
+	//go c.cleanUp(poolConfig)
 
 	return c, nil
 }
-
 
 func (c *channelPool) cleanUp(poolConfig *Config) {
 	if poolConfig.NoneUsedConnCleanTime == 0 {
