@@ -30,6 +30,8 @@ type Config struct {
 	Ping func(interface{}) error
 	//连接最大空闲时间，超过该事件则将失效
 	IdleTimeout time.Duration
+	//连接长时间不用会被清理掉，可设置多长时间，默认10分钟
+	NoneUsedConnCleanTime time.Duration
 }
 
 type connReq struct {
@@ -52,6 +54,7 @@ type channelPool struct {
 type idleConn struct {
 	conn interface{}
 	t    time.Time
+	useTime time.Time
 }
 
 // NewChannelPool 初始化连接
@@ -85,10 +88,33 @@ func NewChannelPool(poolConfig *Config) (Pool, error) {
 			c.Release()
 			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
 		}
-		c.conns <- &idleConn{conn: conn, t: time.Now()}
+		c.conns <- &idleConn{conn: conn, t: time.Now(), useTime: time.Now()}
 	}
 
+
+	go c.cleanUp(poolConfig)
+
 	return c, nil
+}
+
+
+func (c *channelPool) cleanUp(poolConfig *Config) {
+	if poolConfig.NoneUsedConnCleanTime == 0 {
+		poolConfig.NoneUsedConnCleanTime = 10 * time.Minute
+	}
+	for {
+		time.Sleep(1 * time.Minute) // 定期检查的间隔时间
+
+		// 获取池子里的所有连接
+		conns := c.getConns()
+
+		for conn := range conns {
+			// 设置一个时间阈值，超过这个时间未使用的连接将会被关闭
+			if time.Since(conn.useTime) > poolConfig.NoneUsedConnCleanTime {
+				c.Close(conn) // 关闭连接
+			}
+		}
+	}
 }
 
 // getConns 获取所有连接
@@ -126,6 +152,7 @@ func (c *channelPool) Get() (interface{}, error) {
 					continue
 				}
 			}
+			wrapConn.useTime = time.Now()
 			return wrapConn.conn, nil
 		default:
 			c.mu.Lock()
@@ -145,6 +172,7 @@ func (c *channelPool) Get() (interface{}, error) {
 						continue
 					}
 				}
+				ret.idleConn.useTime = time.Now()
 				return ret.idleConn.conn, nil
 			}
 			if c.factory == nil {
@@ -181,13 +209,13 @@ func (c *channelPool) Put(conn interface{}) error {
 		copy(c.connReqs, c.connReqs[1:])
 		c.connReqs = c.connReqs[:l-1]
 		req <- connReq{
-			idleConn: &idleConn{conn: conn, t: time.Now()},
+			idleConn: &idleConn{conn: conn, t: time.Now(), useTime: time.Now()},
 		}
 		c.mu.Unlock()
 		return nil
 	} else {
 		select {
-		case c.conns <- &idleConn{conn: conn, t: time.Now()}:
+		case c.conns <- &idleConn{conn: conn, t: time.Now(), useTime: time.Now()}:
 			c.mu.Unlock()
 			return nil
 		default:
