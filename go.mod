@@ -1,4 +1,4 @@
-module github.com/silenceper/pool
+module github.com/gophernancy/pool
 
 go 1.13
 
